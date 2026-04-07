@@ -6,10 +6,10 @@ import crypto from "crypto";
 const app = express();
 app.use(express.json());
 
-// const SECRET = process.env.ZENCLASS_SECRET;
-// if (!SECRET) {
-//   console.warn("WARNING: ZENCLASS_SECRET is not set");
-// }
+const SECRET = process.env.ZENCLASS_SECRET;
+if (!SECRET) {
+  console.warn("WARNING: ZENCLASS_SECRET is not set");
+}
 
 // путь к файлу с событиями
 const DATA_DIR = "data";
@@ -28,14 +28,13 @@ app.post("/zenclass-webhook", (req, res) => {
       return res.status(400).send("missing fields");
     }
 
-    // проверяем подпись по схеме из статьи: secret&id&timestamp → sha1 → hash[page:1]
-    // const s = `${SECRET}&${id}&${timestamp}`;
-    // const expected = crypto.createHash("sha1").update(s).digest("hex");
+    const s = `${SECRET}&${id}&${timestamp}`;
+    const expected = crypto.createHash("sha1").update(s).digest("hex");
 
-    // if (expected !== hash) {
-    //   console.warn("invalid hash for id", id);
-    //   return res.status(400).send("invalid hash");
-    // }
+    if (expected !== hash) {
+      console.warn("invalid hash for id", id);
+      return res.status(400).send("invalid hash");
+    }
 
     const event = {
       id,
