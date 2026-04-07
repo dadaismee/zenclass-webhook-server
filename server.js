@@ -6,20 +6,26 @@ import crypto from "crypto";
 const app = express();
 app.use(express.json());
 
-const SECRET = process.env.ZENCLASS_SECRET;
-if (!SECRET) {
-  console.warn("WARNING: ZENCLASS_SECRET is not set");
+// несколько секретов через запятую: ZENCLASS_SECRETS="s1,s2,s3"
+const SECRETS = (process.env.ZENCLASS_SECRETS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+if (SECRETS.length === 0) {
+  console.warn("WARNING: ZENCLASS_SECRETS is not set");
 }
 
 // путь к файлу с событиями
 const DATA_DIR = "data";
 const EVENTS_FILE = path.join(DATA_DIR, "events.jsonl");
 
-// убеждаемся, что папка есть
+// проверка, что папка есть
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
+// отдать сырой JSONL
 app.get("/raw-json", (req, res) => {
   if (!fs.existsSync(EVENTS_FILE)) {
     return res.status(404).send("no file");
@@ -27,6 +33,7 @@ app.get("/raw-json", (req, res) => {
   res.sendFile(EVENTS_FILE, { root: "." });
 });
 
+// основной вебхук
 app.post("/zenclass-webhook", (req, res) => {
   try {
     const { id, timestamp, hash, event_name, payload } = req.body;
@@ -35,10 +42,14 @@ app.post("/zenclass-webhook", (req, res) => {
       return res.status(400).send("missing fields");
     }
 
-    const s = `${SECRET}&${id}&${timestamp}`;
-    const expected = crypto.createHash("sha1").update(s).digest("hex");
+    // проверяем по любому из секретов
+    const valid = SECRETS.some((secret) => {
+      const s = `${secret}&${id}&${timestamp}`;
+      const expected = crypto.createHash("sha1").update(s).digest("hex");
+      return expected === hash;
+    });
 
-    if (expected !== hash) {
+    if (!valid) {
       console.warn("invalid hash for id", id);
       return res.status(400).send("invalid hash");
     }
