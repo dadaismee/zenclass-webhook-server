@@ -20,6 +20,13 @@ if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
+app.get("/raw-json", (req, res) => {
+  if (!fs.existsSync(EVENTS_FILE)) {
+    return res.status(404).send("no file");
+  }
+  res.sendFile(EVENTS_FILE, { root: "." });
+});
+
 app.post("/zenclass-webhook", (req, res) => {
   try {
     const { id, timestamp, hash, event_name, payload } = req.body;
