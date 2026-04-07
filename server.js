@@ -1,7 +1,8 @@
 import express from "express";
-import fs from "fs";
-import path from "path";
 import crypto from "crypto";
+import pkg from "pg";
+
+const { Pool } = pkg;
 
 const app = express();
 app.use(express.json());
@@ -16,25 +17,39 @@ if (SECRETS.length === 0) {
   console.warn("WARNING: ZENCLASS_SECRETS is not set");
 }
 
-// путь к файлу с событиями
-const DATA_DIR = "data";
-const EVENTS_FILE = path.join(DATA_DIR, "events.jsonl");
+// подключение к Postgres
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+});
 
-// проверка, что папка есть
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
-
-// отдать сырой JSONL
-app.get("/raw-json", (req, res) => {
-  if (!fs.existsSync(EVENTS_FILE)) {
-    return res.status(404).send("no file");
+// health-check
+app.get("/health-check", async (req, res) => {
+  try {
+    const r = await pool.query("SELECT 1");
+    res.json({ ok: true, db: r.rows[0]["?column?"] === 1 });
+  } catch (e) {
+    console.error("health error", e);
+    res.status(500).json({ ok: false });
   }
-  res.sendFile(EVENTS_FILE, { root: "." });
+});
+
+// отдать сырые последние N событий
+app.get("/events-latest", async (req, res) => {
+  const limit = Number(req.query.limit || 50);
+  try {
+    const r = await pool.query(
+      "SELECT id, timestamp, event_name, payload, received_at FROM events ORDER BY received_at DESC LIMIT $1",
+      [limit]
+    );
+    res.json({ ok: true, events: r.rows });
+  } catch (e) {
+    console.error("select error", e);
+    res.status(500).json({ ok: false });
+  }
 });
 
 // основной вебхук
-app.post("/zenclass-webhook", (req, res) => {
+app.post("/zenclass-webhook", async (req, res) => {
   try {
     const { id, timestamp, hash, event_name, payload } = req.body;
 
@@ -54,23 +69,15 @@ app.post("/zenclass-webhook", (req, res) => {
       return res.status(400).send("invalid hash");
     }
 
-    const event = {
-      id,
-      timestamp,
-      event_name,
-      payload,
-      received_at: Date.now()
-    };
+    // вставляем в БД (идемпотентно по id)
+    await pool.query(
+      `INSERT INTO events (id, timestamp, event_name, payload)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (id) DO NOTHING`,
+      [id, timestamp, event_name, payload]
+    );
 
-    const line = JSON.stringify(event) + "\n";
-
-    fs.appendFile(EVENTS_FILE, line, (err) => {
-      if (err) {
-        console.error("write error", err);
-        return res.status(500).send("write error");
-      }
-      res.send("ok");
-    });
+    res.send("ok");
   } catch (e) {
     console.error("handler error", e);
     res.status(500).send("error");
